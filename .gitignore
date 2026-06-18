@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+.venv/
+venv/
+
+# Local model weights and generated outputs are intentionally not versioned.
+models/
+data/
+experiments/outputs/
+experiments/runs/
+experiments/traces/
+
+# OS/editor noise.
+.DS_Store
+.idea/
+.vscode/

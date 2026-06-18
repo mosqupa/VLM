@@ -1,0 +1,2889 @@
+# LLaVA 1.5 7B 完整架构
+
+模型目录：`models/llava-hf/llava-1.5-7b-hf`
+
+这个文档由 `scripts/dump_llava_architecture.py` 自动生成。模型在 `meta` 设备上按配置实例化，不会加载 14G 权重。
+
+## 总览
+
+```text
+pixel_values
+  -> vision_tower: CLIPVisionModel
+  -> selected hidden state
+  -> multi_modal_projector
+  -> replace <image> token embeddings
+  -> language_model: LlamaForCausalLM / Vicuna
+  -> logits
+```
+
+## 关键配置
+
+- model type: `llava`
+- image token id: `32000`
+- pad token id: `32001`
+- image seq length: `576`
+- vision feature layer: `-2`
+- vision feature select strategy: `default`
+- projector hidden activation: `gelu`
+- text model type: `llama`
+- text hidden size: `4096`
+- vocab size: `32064`
+- max position embeddings: `4096`
+- vision model type: `clip_vision_model`
+- vision image size: `336`
+- vision patch size: `14`
+- vision patch grid: `24 x 24`
+- vision patch tokens: `576`
+- vision hidden size: `1024`
+- vision layers: `24`
+- vision attention heads: `16`
+
+## 主要张量形状
+
+以 batch size = 1、单图输入为例：
+
+```text
+pixel_values                         -> (1, 3, 336, 336)
+vision_tower hidden state             -> (1, 577, 1024)  # +1 是 CLS token
+selected image features, default      -> (1, 576, 1024)
+projected image features              -> (1, 576, 4096)
+language_model inputs_embeds          -> (1, text_tokens + 576, 4096)
+language_model logits                 -> (1, text_tokens + 576, 32064)
+```
+
+## `vision_tower` 结构
+
+- `vision_tower`: `CLIPVisionModel` | direct params=0 | subtree params=303,507,456
+  - `vision_tower.vision_model`: `CLIPVisionTransformer` | direct params=0 | subtree params=303,507,456
+    - `vision_tower.vision_model.embeddings`: `CLIPVisionEmbeddings` | direct params=1,024 | subtree params=1,193,984
+      - param `class_embedding`: (1024), dtype=torch.float32, device=meta
+      - `vision_tower.vision_model.embeddings.patch_embedding`: `Conv2d` | direct params=602,112 | subtree params=602,112 | in_channels=3, out_channels=1024, kernel_size=(14, 14), stride=(14, 14), bias=False
+        - param `weight`: (1024, 3, 14, 14), dtype=torch.float32, device=meta
+      - `vision_tower.vision_model.embeddings.position_embedding`: `Embedding` | direct params=590,848 | subtree params=590,848 | num_embeddings=577, embedding_dim=1024
+        - param `weight`: (577, 1024), dtype=torch.float32, device=meta
+    - `vision_tower.vision_model.pre_layrnorm`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+      - param `weight`: (1024), dtype=torch.float32, device=meta
+      - param `bias`: (1024), dtype=torch.float32, device=meta
+    - `vision_tower.vision_model.encoder`: `CLIPEncoder` | direct params=0 | subtree params=302,309,376
+      - `vision_tower.vision_model.encoder.layers`: `ModuleList` | direct params=0 | subtree params=302,309,376
+        - `vision_tower.vision_model.encoder.layers.0`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.0.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.0.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.0.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.0.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.0.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.0.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.0.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.0.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.0.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.0.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.0.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.1`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.1.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.1.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.1.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.1.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.1.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.1.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.1.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.1.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.1.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.1.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.1.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.2`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.2.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.2.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.2.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.2.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.2.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.2.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.2.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.2.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.2.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.2.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.2.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.3`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.3.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.3.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.3.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.3.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.3.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.3.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.3.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.3.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.3.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.3.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.3.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.4`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.4.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.4.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.4.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.4.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.4.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.4.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.4.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.4.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.4.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.4.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.4.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.5`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.5.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.5.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.5.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.5.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.5.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.5.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.5.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.5.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.5.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.5.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.5.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.6`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.6.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.6.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.6.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.6.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.6.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.6.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.6.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.6.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.6.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.6.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.6.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.7`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.7.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.7.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.7.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.7.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.7.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.7.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.7.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.7.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.7.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.7.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.7.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.8`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.8.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.8.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.8.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.8.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.8.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.8.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.8.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.8.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.8.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.8.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.8.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.9`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.9.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.9.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.9.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.9.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.9.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.9.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.9.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.9.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.9.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.9.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.9.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.10`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.10.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.10.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.10.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.10.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.10.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.10.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.10.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.10.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.10.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.10.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.10.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.11`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.11.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.11.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.11.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.11.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.11.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.11.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.11.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.11.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.11.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.11.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.11.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.12`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.12.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.12.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.12.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.12.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.12.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.12.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.12.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.12.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.12.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.12.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.12.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.13`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.13.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.13.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.13.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.13.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.13.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.13.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.13.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.13.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.13.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.13.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.13.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.14`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.14.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.14.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.14.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.14.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.14.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.14.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.14.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.14.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.14.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.14.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.14.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.15`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.15.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.15.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.15.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.15.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.15.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.15.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.15.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.15.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.15.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.15.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.15.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.16`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.16.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.16.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.16.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.16.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.16.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.16.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.16.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.16.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.16.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.16.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.16.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.17`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.17.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.17.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.17.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.17.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.17.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.17.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.17.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.17.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.17.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.17.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.17.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.18`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.18.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.18.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.18.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.18.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.18.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.18.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.18.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.18.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.18.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.18.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.18.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.19`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.19.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.19.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.19.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.19.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.19.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.19.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.19.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.19.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.19.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.19.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.19.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.20`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.20.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.20.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.20.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.20.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.20.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.20.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.20.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.20.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.20.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.20.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.20.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.21`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.21.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.21.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.21.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.21.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.21.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.21.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.21.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.21.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.21.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.21.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.21.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.22`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.22.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.22.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.22.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.22.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.22.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.22.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.22.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.22.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.22.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.22.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.22.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.encoder.layers.23`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+          - `vision_tower.vision_model.encoder.layers.23.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+            - `vision_tower.vision_model.encoder.layers.23.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.23.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.23.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.23.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+              - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.23.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.23.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+            - `vision_tower.vision_model.encoder.layers.23.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+            - `vision_tower.vision_model.encoder.layers.23.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+              - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+              - param `bias`: (4096), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.23.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+              - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.23.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+            - param `weight`: (1024), dtype=torch.float32, device=meta
+            - param `bias`: (1024), dtype=torch.float32, device=meta
+    - `vision_tower.vision_model.post_layernorm`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+      - param `weight`: (1024), dtype=torch.float32, device=meta
+      - param `bias`: (1024), dtype=torch.float32, device=meta
+
+## `multi_modal_projector` 结构
+
+- `multi_modal_projector`: `LlavaMultiModalProjector` | direct params=0 | subtree params=20,979,712
+  - `multi_modal_projector.linear_1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+    - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+    - param `bias`: (4096), dtype=torch.float32, device=meta
+  - `multi_modal_projector.act`: `GELUActivation` | direct params=0 | subtree params=0
+  - `multi_modal_projector.linear_2`: `Linear` | direct params=16,781,312 | subtree params=16,781,312 | in=4096, out=4096, bias=True
+    - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+    - param `bias`: (4096), dtype=torch.float32, device=meta
+
+## `language_model` 结构
+
+- `language_model`: `LlamaForCausalLM` | direct params=0 | subtree params=6,738,939,904
+  - `language_model.model`: `LlamaModel` | direct params=0 | subtree params=6,607,605,760
+    - `language_model.model.embed_tokens`: `Embedding` | direct params=131,334,144 | subtree params=131,334,144 | num_embeddings=32064, embedding_dim=4096
+      - param `weight`: (32064, 4096), dtype=torch.float32, device=meta
+    - `language_model.model.layers`: `ModuleList` | direct params=0 | subtree params=6,476,267,520
+      - `language_model.model.layers.0`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.0.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.0.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.0.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.0.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.0.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.0.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.0.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.0.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.0.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.0.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.0.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.0.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.1`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.1.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.1.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.1.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.1.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.1.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.1.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.1.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.1.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.1.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.1.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.1.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.1.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.2`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.2.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.2.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.2.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.2.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.2.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.2.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.2.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.2.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.2.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.2.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.2.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.2.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.3`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.3.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.3.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.3.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.3.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.3.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.3.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.3.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.3.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.3.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.3.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.3.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.3.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.4`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.4.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.4.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.4.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.4.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.4.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.4.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.4.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.4.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.4.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.4.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.4.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.4.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.5`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.5.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.5.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.5.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.5.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.5.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.5.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.5.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.5.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.5.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.5.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.5.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.5.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.6`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.6.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.6.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.6.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.6.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.6.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.6.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.6.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.6.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.6.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.6.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.6.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.6.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.7`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.7.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.7.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.7.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.7.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.7.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.7.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.7.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.7.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.7.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.7.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.7.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.7.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.8`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.8.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.8.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.8.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.8.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.8.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.8.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.8.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.8.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.8.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.8.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.8.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.8.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.9`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.9.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.9.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.9.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.9.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.9.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.9.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.9.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.9.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.9.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.9.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.9.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.9.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.10`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.10.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.10.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.10.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.10.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.10.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.10.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.10.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.10.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.10.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.10.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.10.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.10.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.11`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.11.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.11.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.11.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.11.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.11.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.11.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.11.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.11.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.11.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.11.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.11.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.11.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.12`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.12.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.12.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.12.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.12.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.12.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.12.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.12.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.12.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.12.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.12.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.12.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.12.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.13`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.13.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.13.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.13.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.13.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.13.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.13.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.13.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.13.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.13.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.13.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.13.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.13.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.14`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.14.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.14.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.14.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.14.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.14.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.14.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.14.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.14.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.14.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.14.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.14.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.14.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.15`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.15.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.15.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.15.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.15.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.15.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.15.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.15.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.15.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.15.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.15.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.15.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.15.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.16`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.16.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.16.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.16.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.16.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.16.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.16.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.16.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.16.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.16.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.16.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.16.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.16.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.17`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.17.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.17.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.17.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.17.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.17.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.17.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.17.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.17.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.17.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.17.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.17.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.17.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.18`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.18.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.18.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.18.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.18.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.18.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.18.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.18.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.18.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.18.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.18.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.18.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.18.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.19`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.19.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.19.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.19.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.19.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.19.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.19.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.19.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.19.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.19.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.19.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.19.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.19.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.20`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.20.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.20.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.20.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.20.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.20.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.20.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.20.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.20.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.20.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.20.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.20.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.20.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.21`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.21.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.21.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.21.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.21.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.21.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.21.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.21.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.21.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.21.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.21.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.21.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.21.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.22`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.22.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.22.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.22.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.22.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.22.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.22.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.22.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.22.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.22.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.22.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.22.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.22.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.23`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.23.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.23.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.23.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.23.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.23.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.23.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.23.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.23.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.23.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.23.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.23.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.23.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.24`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.24.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.24.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.24.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.24.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.24.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.24.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.24.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.24.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.24.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.24.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.24.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.24.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.25`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.25.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.25.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.25.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.25.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.25.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.25.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.25.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.25.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.25.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.25.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.25.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.25.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.26`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.26.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.26.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.26.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.26.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.26.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.26.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.26.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.26.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.26.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.26.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.26.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.26.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.27`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.27.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.27.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.27.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.27.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.27.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.27.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.27.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.27.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.27.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.27.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.27.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.27.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.28`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.28.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.28.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.28.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.28.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.28.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.28.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.28.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.28.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.28.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.28.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.28.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.28.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.29`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.29.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.29.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.29.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.29.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.29.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.29.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.29.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.29.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.29.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.29.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.29.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.29.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.30`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.30.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.30.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.30.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.30.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.30.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.30.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.30.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.30.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.30.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.30.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.30.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.30.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers.31`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+        - `language_model.model.layers.31.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+          - `language_model.model.layers.31.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.31.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.31.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.31.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+            - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.31.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+          - `language_model.model.layers.31.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.31.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+            - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.31.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+            - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+          - `language_model.model.layers.31.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+        - `language_model.model.layers.31.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.31.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+          - param `weight`: (4096), dtype=torch.float32, device=meta
+    - `language_model.model.norm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+      - param `weight`: (4096), dtype=torch.float32, device=meta
+    - `language_model.model.rotary_emb`: `LlamaRotaryEmbedding` | direct params=0 | subtree params=0
+  - `language_model.lm_head`: `Linear` | direct params=131,334,144 | subtree params=131,334,144 | in=4096, out=32064, bias=False
+    - param `weight`: (32064, 4096), dtype=torch.float32, device=meta
+
+## 全量模块树
+
+下面是 `model.named_modules()` 的完整展开。`direct params` 是该模块自己直接持有的参数量；`subtree params` 包含所有子模块。
+
+- `<root>`: `LlavaForConditionalGeneration` | direct params=0 | subtree params=7,063,427,072
+  - `vision_tower`: `CLIPVisionModel` | direct params=0 | subtree params=303,507,456
+    - `vision_tower.vision_model`: `CLIPVisionTransformer` | direct params=0 | subtree params=303,507,456
+      - `vision_tower.vision_model.embeddings`: `CLIPVisionEmbeddings` | direct params=1,024 | subtree params=1,193,984
+        - param `class_embedding`: (1024), dtype=torch.float32, device=meta
+        - buffer `position_ids`: (1, 577), dtype=torch.int64, device=cpu
+        - `vision_tower.vision_model.embeddings.patch_embedding`: `Conv2d` | direct params=602,112 | subtree params=602,112 | in_channels=3, out_channels=1024, kernel_size=(14, 14), stride=(14, 14), bias=False
+          - param `weight`: (1024, 3, 14, 14), dtype=torch.float32, device=meta
+        - `vision_tower.vision_model.embeddings.position_embedding`: `Embedding` | direct params=590,848 | subtree params=590,848 | num_embeddings=577, embedding_dim=1024
+          - param `weight`: (577, 1024), dtype=torch.float32, device=meta
+      - `vision_tower.vision_model.pre_layrnorm`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+        - param `weight`: (1024), dtype=torch.float32, device=meta
+        - param `bias`: (1024), dtype=torch.float32, device=meta
+      - `vision_tower.vision_model.encoder`: `CLIPEncoder` | direct params=0 | subtree params=302,309,376
+        - `vision_tower.vision_model.encoder.layers`: `ModuleList` | direct params=0 | subtree params=302,309,376
+          - `vision_tower.vision_model.encoder.layers.0`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.0.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.0.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.0.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.0.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.0.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.0.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.0.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.0.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.0.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.0.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.0.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.1`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.1.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.1.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.1.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.1.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.1.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.1.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.1.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.1.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.1.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.1.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.1.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.2`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.2.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.2.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.2.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.2.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.2.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.2.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.2.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.2.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.2.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.2.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.2.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.3`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.3.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.3.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.3.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.3.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.3.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.3.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.3.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.3.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.3.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.3.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.3.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.4`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.4.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.4.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.4.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.4.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.4.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.4.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.4.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.4.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.4.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.4.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.4.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.5`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.5.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.5.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.5.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.5.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.5.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.5.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.5.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.5.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.5.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.5.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.5.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.6`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.6.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.6.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.6.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.6.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.6.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.6.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.6.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.6.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.6.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.6.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.6.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.7`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.7.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.7.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.7.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.7.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.7.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.7.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.7.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.7.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.7.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.7.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.7.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.8`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.8.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.8.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.8.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.8.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.8.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.8.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.8.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.8.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.8.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.8.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.8.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.9`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.9.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.9.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.9.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.9.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.9.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.9.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.9.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.9.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.9.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.9.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.9.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.10`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.10.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.10.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.10.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.10.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.10.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.10.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.10.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.10.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.10.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.10.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.10.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.11`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.11.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.11.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.11.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.11.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.11.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.11.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.11.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.11.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.11.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.11.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.11.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.12`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.12.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.12.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.12.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.12.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.12.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.12.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.12.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.12.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.12.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.12.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.12.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.13`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.13.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.13.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.13.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.13.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.13.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.13.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.13.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.13.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.13.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.13.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.13.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.14`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.14.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.14.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.14.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.14.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.14.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.14.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.14.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.14.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.14.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.14.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.14.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.15`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.15.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.15.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.15.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.15.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.15.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.15.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.15.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.15.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.15.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.15.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.15.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.16`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.16.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.16.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.16.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.16.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.16.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.16.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.16.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.16.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.16.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.16.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.16.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.17`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.17.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.17.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.17.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.17.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.17.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.17.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.17.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.17.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.17.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.17.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.17.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.18`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.18.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.18.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.18.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.18.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.18.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.18.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.18.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.18.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.18.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.18.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.18.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.19`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.19.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.19.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.19.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.19.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.19.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.19.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.19.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.19.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.19.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.19.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.19.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.20`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.20.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.20.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.20.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.20.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.20.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.20.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.20.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.20.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.20.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.20.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.20.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.21`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.21.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.21.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.21.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.21.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.21.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.21.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.21.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.21.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.21.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.21.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.21.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.22`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.22.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.22.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.22.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.22.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.22.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.22.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.22.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.22.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.22.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.22.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.22.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+          - `vision_tower.vision_model.encoder.layers.23`: `CLIPEncoderLayer` | direct params=0 | subtree params=12,596,224
+            - `vision_tower.vision_model.encoder.layers.23.self_attn`: `CLIPSdpaAttention` | direct params=0 | subtree params=4,198,400
+              - `vision_tower.vision_model.encoder.layers.23.self_attn.k_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.23.self_attn.v_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.23.self_attn.q_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.23.self_attn.out_proj`: `Linear` | direct params=1,049,600 | subtree params=1,049,600 | in=1024, out=1024, bias=True
+                - param `weight`: (1024, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.23.layer_norm1`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.23.mlp`: `CLIPMLP` | direct params=0 | subtree params=8,393,728
+              - `vision_tower.vision_model.encoder.layers.23.mlp.activation_fn`: `QuickGELUActivation` | direct params=0 | subtree params=0
+              - `vision_tower.vision_model.encoder.layers.23.mlp.fc1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+                - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+                - param `bias`: (4096), dtype=torch.float32, device=meta
+              - `vision_tower.vision_model.encoder.layers.23.mlp.fc2`: `Linear` | direct params=4,195,328 | subtree params=4,195,328 | in=4096, out=1024, bias=True
+                - param `weight`: (1024, 4096), dtype=torch.float32, device=meta
+                - param `bias`: (1024), dtype=torch.float32, device=meta
+            - `vision_tower.vision_model.encoder.layers.23.layer_norm2`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+              - param `weight`: (1024), dtype=torch.float32, device=meta
+              - param `bias`: (1024), dtype=torch.float32, device=meta
+      - `vision_tower.vision_model.post_layernorm`: `LayerNorm` | direct params=2,048 | subtree params=2,048 | normalized_shape=(1024,), eps=1e-05
+        - param `weight`: (1024), dtype=torch.float32, device=meta
+        - param `bias`: (1024), dtype=torch.float32, device=meta
+  - `multi_modal_projector`: `LlavaMultiModalProjector` | direct params=0 | subtree params=20,979,712
+    - `multi_modal_projector.linear_1`: `Linear` | direct params=4,198,400 | subtree params=4,198,400 | in=1024, out=4096, bias=True
+      - param `weight`: (4096, 1024), dtype=torch.float32, device=meta
+      - param `bias`: (4096), dtype=torch.float32, device=meta
+    - `multi_modal_projector.act`: `GELUActivation` | direct params=0 | subtree params=0
+    - `multi_modal_projector.linear_2`: `Linear` | direct params=16,781,312 | subtree params=16,781,312 | in=4096, out=4096, bias=True
+      - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+      - param `bias`: (4096), dtype=torch.float32, device=meta
+  - `language_model`: `LlamaForCausalLM` | direct params=0 | subtree params=6,738,939,904
+    - `language_model.model`: `LlamaModel` | direct params=0 | subtree params=6,607,605,760
+      - `language_model.model.embed_tokens`: `Embedding` | direct params=131,334,144 | subtree params=131,334,144 | num_embeddings=32064, embedding_dim=4096
+        - param `weight`: (32064, 4096), dtype=torch.float32, device=meta
+      - `language_model.model.layers`: `ModuleList` | direct params=0 | subtree params=6,476,267,520
+        - `language_model.model.layers.0`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.0.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.0.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.0.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.0.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.0.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.0.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.0.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.0.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.0.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.0.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.0.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.0.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.1`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.1.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.1.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.1.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.1.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.1.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.1.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.1.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.1.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.1.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.1.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.1.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.1.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.2`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.2.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.2.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.2.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.2.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.2.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.2.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.2.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.2.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.2.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.2.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.2.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.2.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.3`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.3.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.3.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.3.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.3.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.3.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.3.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.3.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.3.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.3.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.3.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.3.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.3.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.4`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.4.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.4.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.4.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.4.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.4.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.4.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.4.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.4.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.4.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.4.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.4.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.4.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.5`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.5.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.5.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.5.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.5.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.5.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.5.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.5.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.5.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.5.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.5.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.5.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.5.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.6`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.6.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.6.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.6.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.6.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.6.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.6.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.6.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.6.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.6.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.6.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.6.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.6.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.7`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.7.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.7.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.7.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.7.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.7.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.7.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.7.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.7.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.7.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.7.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.7.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.7.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.8`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.8.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.8.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.8.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.8.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.8.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.8.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.8.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.8.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.8.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.8.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.8.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.8.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.9`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.9.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.9.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.9.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.9.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.9.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.9.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.9.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.9.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.9.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.9.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.9.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.9.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.10`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.10.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.10.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.10.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.10.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.10.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.10.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.10.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.10.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.10.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.10.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.10.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.10.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.11`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.11.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.11.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.11.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.11.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.11.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.11.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.11.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.11.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.11.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.11.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.11.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.11.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.12`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.12.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.12.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.12.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.12.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.12.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.12.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.12.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.12.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.12.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.12.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.12.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.12.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.13`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.13.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.13.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.13.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.13.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.13.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.13.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.13.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.13.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.13.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.13.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.13.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.13.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.14`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.14.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.14.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.14.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.14.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.14.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.14.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.14.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.14.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.14.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.14.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.14.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.14.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.15`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.15.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.15.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.15.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.15.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.15.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.15.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.15.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.15.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.15.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.15.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.15.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.15.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.16`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.16.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.16.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.16.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.16.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.16.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.16.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.16.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.16.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.16.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.16.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.16.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.16.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.17`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.17.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.17.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.17.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.17.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.17.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.17.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.17.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.17.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.17.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.17.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.17.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.17.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.18`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.18.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.18.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.18.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.18.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.18.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.18.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.18.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.18.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.18.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.18.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.18.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.18.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.19`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.19.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.19.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.19.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.19.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.19.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.19.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.19.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.19.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.19.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.19.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.19.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.19.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.20`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.20.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.20.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.20.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.20.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.20.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.20.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.20.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.20.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.20.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.20.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.20.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.20.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.21`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.21.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.21.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.21.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.21.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.21.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.21.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.21.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.21.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.21.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.21.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.21.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.21.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.22`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.22.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.22.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.22.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.22.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.22.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.22.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.22.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.22.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.22.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.22.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.22.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.22.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.23`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.23.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.23.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.23.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.23.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.23.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.23.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.23.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.23.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.23.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.23.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.23.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.23.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.24`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.24.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.24.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.24.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.24.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.24.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.24.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.24.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.24.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.24.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.24.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.24.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.24.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.25`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.25.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.25.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.25.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.25.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.25.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.25.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.25.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.25.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.25.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.25.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.25.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.25.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.26`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.26.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.26.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.26.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.26.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.26.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.26.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.26.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.26.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.26.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.26.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.26.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.26.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.27`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.27.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.27.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.27.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.27.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.27.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.27.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.27.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.27.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.27.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.27.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.27.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.27.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.28`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.28.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.28.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.28.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.28.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.28.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.28.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.28.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.28.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.28.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.28.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.28.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.28.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.29`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.29.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.29.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.29.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.29.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.29.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.29.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.29.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.29.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.29.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.29.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.29.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.29.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.30`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.30.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.30.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.30.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.30.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.30.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.30.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.30.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.30.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.30.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.30.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.30.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.30.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+        - `language_model.model.layers.31`: `LlamaDecoderLayer` | direct params=0 | subtree params=202,383,360
+          - `language_model.model.layers.31.self_attn`: `LlamaAttention` | direct params=0 | subtree params=67,108,864
+            - `language_model.model.layers.31.self_attn.q_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.31.self_attn.k_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.31.self_attn.v_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.31.self_attn.o_proj`: `Linear` | direct params=16,777,216 | subtree params=16,777,216 | in=4096, out=4096, bias=False
+              - param `weight`: (4096, 4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.31.mlp`: `LlamaMLP` | direct params=0 | subtree params=135,266,304
+            - `language_model.model.layers.31.mlp.gate_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.31.mlp.up_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=4096, out=11008, bias=False
+              - param `weight`: (11008, 4096), dtype=torch.float32, device=meta
+            - `language_model.model.layers.31.mlp.down_proj`: `Linear` | direct params=45,088,768 | subtree params=45,088,768 | in=11008, out=4096, bias=False
+              - param `weight`: (4096, 11008), dtype=torch.float32, device=meta
+            - `language_model.model.layers.31.mlp.act_fn`: `SiLU` | direct params=0 | subtree params=0
+          - `language_model.model.layers.31.input_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+          - `language_model.model.layers.31.post_attention_layernorm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+            - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.norm`: `LlamaRMSNorm` | direct params=4,096 | subtree params=4,096 | eps=1e-05
+        - param `weight`: (4096), dtype=torch.float32, device=meta
+      - `language_model.model.rotary_emb`: `LlamaRotaryEmbedding` | direct params=0 | subtree params=0
+        - buffer `inv_freq`: (64), dtype=torch.float32, device=cpu
+    - `language_model.lm_head`: `Linear` | direct params=131,334,144 | subtree params=131,334,144 | in=4096, out=32064, bias=False
+      - param `weight`: (32064, 4096), dtype=torch.float32, device=meta
