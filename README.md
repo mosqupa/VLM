@@ -99,26 +99,19 @@ conda run -n FSDrive python scripts/trace_llava_tensors.py \
 Run a small POPE smoke test:
 
 ```bash
-conda run -n FSDrive python scripts/eval_pope.py \
-  --model-path models/llava-hf/llava-1.5-7b-hf \
-  --label-file data/benchmarks/pope/coco/coco_pope_random.json \
-  --image-root data/benchmarks/pope/coco/images \
-  --output experiments/outputs/pope_random_smoke_answers.jsonl \
-  --metrics-output experiments/outputs/pope_random_smoke_metrics.json \
-  --limit 2 \
-  --load-in-4bit
+conda run -n FSDrive bash scripts/eval_pope.sh random --limit 2
 ```
 
 Run the full POPE random split:
 
 ```bash
-conda run -n FSDrive python scripts/eval_pope.py \
-  --model-path models/llava-hf/llava-1.5-7b-hf \
-  --label-file data/benchmarks/pope/coco/coco_pope_random.json \
-  --image-root data/benchmarks/pope/coco/images \
-  --output experiments/outputs/pope_random_answers.jsonl \
-  --metrics-output experiments/outputs/pope_random_metrics.json \
-  --load-in-4bit
+conda run -n FSDrive bash scripts/eval_pope.sh random
+```
+
+Run all three POPE-COCO splits:
+
+```bash
+conda run -n FSDrive bash scripts/eval_pope.sh all
 ```
 
 Dump the full model architecture without loading weights:
