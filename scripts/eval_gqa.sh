@@ -6,6 +6,6 @@ cd "$(dirname "$0")/.."
 export PYTHONPATH=src:${PYTHONPATH:-}
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-python scripts/eval_pope.py \
-  --config configs/eval/pope.yaml \
+python scripts/eval_gqa.py \
+  --config configs/eval/gqa.yaml \
   "$@"

@@ -11,18 +11,18 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from vlm_eval.benchmarks.pope import build_pope_prompt, load_pope_questions
-from vlm_eval.metrics.classification import evaluate_yes_no, normalize_yes_no
+from vlm_eval.benchmarks.gqa import build_gqa_prompt, load_gqa_questions
+from vlm_eval.metrics.vqa import evaluate_exact_match, normalize_short_answer
 from vlm_eval.utils.config import load_yaml_config
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate a Hugging Face LLaVA model on POPE.")
+    parser = argparse.ArgumentParser(description="Evaluate a Hugging Face LLaVA model on GQA.")
     parser.add_argument("--model-path", default="models/llava-hf/llava-1.5-7b-hf")
-    parser.add_argument("--label-file", default=None)
+    parser.add_argument("--question-file", default=None)
     parser.add_argument("--image-root", default=None)
-    parser.add_argument("--output", default="experiments/outputs/pope_answers.jsonl")
-    parser.add_argument("--metrics-output", default="experiments/outputs/pope_metrics.json")
+    parser.add_argument("--output", default="experiments/outputs/gqa_testdev_balanced_answers.jsonl")
+    parser.add_argument("--metrics-output", default="experiments/outputs/gqa_testdev_balanced_metrics.json")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--max-new-tokens", type=int, default=16)
     parser.add_argument("--device-map", default="auto")
@@ -41,12 +41,12 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if args.label_file is None:
-        parser.error("--label-file is required (either via --config or the command line)")
+    if args.question_file is None:
+        parser.error("--question-file is required (either via --config or the command line)")
     if args.image_root is None:
         parser.error("--image-root is required (either via --config or the command line)")
 
-    questions = load_pope_questions(args.label_file)
+    questions = load_gqa_questions(args.question_file)
     if args.limit is not None:
         questions = questions[: args.limit]
 
@@ -63,18 +63,19 @@ def main() -> None:
         load_in_4bit=args.load_in_4bit,
     )
 
-    answers: list[str] = []
     labels: list[str] = []
+    answers: list[str] = []
     image_root = Path(args.image_root)
 
     with output_path.open("w", encoding="utf-8") as handle:
         for index, question in enumerate(questions, start=1):
             image_path = image_root / question.image
-            prompt = build_pope_prompt(question.text)
+            prompt = build_gqa_prompt(question.text)
             answer = runner.generate(image_path, prompt, max_new_tokens=args.max_new_tokens)
-            normalized_answer = normalize_yes_no(answer)
-            labels.append(question.label)
-            answers.append(answer)
+            normalized_answer = normalize_short_answer(answer)
+            if question.answer is not None:
+                labels.append(question.answer)
+                answers.append(answer)
 
             handle.write(
                 json.dumps(
@@ -82,7 +83,7 @@ def main() -> None:
                         "question_id": question.question_id,
                         "image": question.image,
                         "question": question.text,
-                        "label": question.label,
+                        "label": question.answer,
                         "answer": answer,
                         "normalized_answer": normalized_answer,
                     },
@@ -90,11 +91,16 @@ def main() -> None:
                 )
                 + "\n"
             )
-            print(f"[{index}/{len(questions)}] label={question.label} answer={normalized_answer} raw={answer!r}")
+            label_text = "" if question.answer is None else f" label={question.answer!r}"
+            print(f"[{index}/{len(questions)}]{label_text} answer={normalized_answer!r} raw={answer!r}")
 
-    metrics = evaluate_yes_no(labels, answers)
-    metrics_path.write_text(json.dumps(asdict(metrics), indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
-    print(json.dumps(asdict(metrics), indent=2, ensure_ascii=True))
+    if labels:
+        metrics = evaluate_exact_match(labels, answers)
+        metrics_path.write_text(json.dumps(asdict(metrics), indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+        print(json.dumps(asdict(metrics), indent=2, ensure_ascii=True))
+    else:
+        metrics_path.write_text(json.dumps({"total": 0, "note": "question file has no labels"}, indent=2) + "\n")
+        print("No labels found; wrote predictions only.")
 
 
 if __name__ == "__main__":

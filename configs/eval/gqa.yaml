@@ -1,0 +1,9 @@
+model_path: models/llava-hf/llava-1.5-7b-hf
+question_file: data/benchmarks/gqa/questions/testdev_balanced_questions.json
+image_root: data/benchmarks/gqa/images/testdev_balanced
+output: experiments/outputs/gqa_testdev_balanced_answers.jsonl
+metrics_output: experiments/outputs/gqa_testdev_balanced_metrics.json
+max_new_tokens: 16
+device_map: auto
+load_in_4bit: false
+limit: null
