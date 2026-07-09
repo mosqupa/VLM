@@ -13,38 +13,24 @@ if str(SRC_ROOT) not in sys.path:
 
 from vlm_eval.benchmarks.gqa import build_gqa_prompt, load_gqa_questions
 from vlm_eval.metrics.vqa import evaluate_exact_match, normalize_short_answer
-from vlm_eval.utils.config import load_yaml_config
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate a Hugging Face LLaVA model on GQA.")
-    parser.add_argument("--model-path", default="models/llava-hf/llava-1.5-7b-hf")
-    parser.add_argument("--question-file", default=None)
-    parser.add_argument("--image-root", default=None)
-    parser.add_argument("--output", default="experiments/outputs/gqa_testdev_balanced_answers.jsonl")
-    parser.add_argument("--metrics-output", default="experiments/outputs/gqa_testdev_balanced_metrics.json")
+    parser.add_argument("--model-path", default="models/llava-1.5-7b-hf")
+    parser.add_argument(
+        "--question-file",
+        default="data/benchmarks/gqa/questions/testdev_balanced_questions.json",
+    )
+    parser.add_argument("--image-root", default="data/benchmarks/gqa/images/testdev_balanced")
+    parser.add_argument("--output", default="outputs/gqa_testdev_balanced_answers.jsonl")
+    parser.add_argument("--metrics-output", default="outputs/gqa_testdev_balanced_metrics.json")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--max-new-tokens", type=int, default=16)
     parser.add_argument("--device-map", default="auto")
     parser.add_argument("--load-in-4bit", action="store_true")
-    parser.add_argument(
-        "--config",
-        type=str,
-        default=None,
-        help="Path to a YAML config file that supplies default values (CLI arguments take precedence).",
-    )
-
-    pre_args, _ = parser.parse_known_args()
-    if pre_args.config:
-        config = load_yaml_config(pre_args.config)
-        parser.set_defaults(**config)
 
     args = parser.parse_args()
-
-    if args.question_file is None:
-        parser.error("--question-file is required (either via --config or the command line)")
-    if args.image_root is None:
-        parser.error("--image-root is required (either via --config or the command line)")
 
     questions = load_gqa_questions(args.question_file)
     if args.limit is not None:

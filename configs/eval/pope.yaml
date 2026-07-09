@@ -1,9 +1,0 @@
-model_path: models/llava-hf/llava-1.5-7b-hf
-label_file: data/benchmarks/pope/coco/coco_pope_random.json
-image_root: data/benchmarks/pope/coco/images
-output: experiments/outputs/pope_random_answers.jsonl
-metrics_output: experiments/outputs/pope_random_metrics.json
-max_new_tokens: 16
-device_map: auto
-load_in_4bit: false
-limit: null

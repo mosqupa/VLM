@@ -13,38 +13,21 @@ if str(SRC_ROOT) not in sys.path:
 
 from vlm_eval.benchmarks.pope import build_pope_prompt, load_pope_questions
 from vlm_eval.metrics.classification import evaluate_yes_no, normalize_yes_no
-from vlm_eval.utils.config import load_yaml_config
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate a Hugging Face LLaVA model on POPE.")
-    parser.add_argument("--model-path", default="models/llava-hf/llava-1.5-7b-hf")
-    parser.add_argument("--label-file", default=None)
-    parser.add_argument("--image-root", default=None)
-    parser.add_argument("--output", default="experiments/outputs/pope_answers.jsonl")
-    parser.add_argument("--metrics-output", default="experiments/outputs/pope_metrics.json")
+    parser.add_argument("--model-path", default="models/llava-1.5-7b-hf")
+    parser.add_argument("--label-file", default="data/benchmarks/pope/coco/coco_pope_random.json")
+    parser.add_argument("--image-root", default="data/benchmarks/pope/coco/images")
+    parser.add_argument("--output", default="outputs/pope_random_answers.jsonl")
+    parser.add_argument("--metrics-output", default="outputs/pope_random_metrics.json")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--max-new-tokens", type=int, default=16)
     parser.add_argument("--device-map", default="auto")
     parser.add_argument("--load-in-4bit", action="store_true")
-    parser.add_argument(
-        "--config",
-        type=str,
-        default=None,
-        help="Path to a YAML config file that supplies default values (CLI arguments take precedence).",
-    )
-
-    pre_args, _ = parser.parse_known_args()
-    if pre_args.config:
-        config = load_yaml_config(pre_args.config)
-        parser.set_defaults(**config)
 
     args = parser.parse_args()
-
-    if args.label_file is None:
-        parser.error("--label-file is required (either via --config or the command line)")
-    if args.image_root is None:
-        parser.error("--image-root is required (either via --config or the command line)")
 
     questions = load_pope_questions(args.label_file)
     if args.limit is not None:

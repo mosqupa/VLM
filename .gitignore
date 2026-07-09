@@ -8,14 +8,13 @@ __pycache__/
 .venv/
 venv/
 
-# Local model weights and generated outputs are intentionally not versioned.
 models/
+LLaVA/playground/
 data/
-experiments/outputs/
-experiments/runs/
-experiments/traces/
+/images/
+outputs
+test.py
 
-# OS/editor noise.
 .DS_Store
 .idea/
 .vscode/
